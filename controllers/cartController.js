@@ -1,127 +1,118 @@
 // controllers/cartController.js
-const axios = require('axios');
-const Cart = require('../models/cartModel');
-const { Products } = require('../models/productsModel');
-const Payment = require('../models/paymentModel');
-const Order = require('../models/orderModel');
+const axios = require("axios");
+const mongoose = require("mongoose");
+const Cart = require("../models/cartModel");
+const { Products } = require("../models/productsModel");
+const Payment = require("../models/paymentModel");
+const Order = require("../models/orderModel");
 const { OAuth2Client } = require("google-auth-library");
-const mongoose = require('mongoose');
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// Add to Cart
+// ---------------------------------------------------------------------
+// ADD TO CART
+// ---------------------------------------------------------------------
 const addToCart = async (req, res) => {
-  const userId = req.user?._id;
-  const formData = req.body;
-  const { id, quantity = 1, productType, name, name_ar, price, image, category, category_ar } = formData;
-
-  if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
   try {
-    // Basic validation (only required fields)
-    if (!id || quantity == null) {
-      return res.status(400).json({ message: 'Missing required fields: id or quantity' });
-    }
+    const userId = req.user?._id;
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
-    // Find product (ensure it exists)
+    const {
+      id, // product _id
+      quantity = 1,
+      productType,
+      name,
+      name_ar,
+      price,
+      image,
+      category,
+      category_ar,
+    } = req.body;
+
+    if (!id || quantity == null)
+      return res
+        .status(400)
+        .json({ message: "Missing required fields: id or quantity" });
+
+    // ✅ Ensure the product exists
     const product = await Products.findById(id);
-    if (!product) return res.status(404).json({ message: 'Product not found' });
+    if (!product) return res.status(404).json({ message: "Product not found" });
 
-    // Find or create cart
+    // ✅ Find or create the user's cart
     let cart = await Cart.findOne({ userId });
-    if (!cart) {
-      cart = new Cart({ userId, items: [] });
-    }
+    if (!cart) cart = new Cart({ userId, items: [], totalAmount: 0 });
 
-    // Compare by stored product reference (item.id) — support ObjectId comparisons
-    const productObjectId = mongoose.Types.ObjectId(id);
-    const existingItem = cart.items.find(item => {
-      const prodRef = item.id || item.productId || item._id;
-      try {
-        return prodRef && prodRef.equals && prodRef.equals(productObjectId);
-      } catch (err) {
-        // fallback to string comparison
-        return prodRef && String(prodRef) === String(id);
-      }
-    });
+    const productObjectId = new mongoose.Types.ObjectId(id);
+
+    // ✅ Check if product already in cart
+    const existingItem = cart.items.find(
+      (i) => String(i._id) === String(productObjectId)
+    );
 
     if (existingItem) {
-      existingItem.quantity = Number(existingItem.quantity || 0) + Number(quantity || 1);
-      // Ensure price exists (fallback to product.price)
-      existingItem.price = Number(existingItem.price ?? product.price ?? 0);
-      existingItem.totalPrice = Number(existingItem.price) * Number(existingItem.quantity);
+      existingItem.quantity += Number(quantity);
+      existingItem.totalPrice = Number(existingItem.price) * existingItem.quantity;
     } else {
-      // Push a new item — keep product reference in `id` to match your schema
+      // ✅ Add new cart item (use _id same as product _id)
       cart.items.push({
-        id: product._id,
-        productType: product.productType || productType,
+        _id: product._id,
         name: product.name || name,
         name_ar: product.name_ar || name_ar,
         category: product.category || category,
         category_ar: product.category_ar || category_ar,
+        productType: product.productType || productType,
+        price: Number(product.price ?? price ?? 0),
         quantity: Number(quantity || 1),
         image: product.image || image || {},
-        price: Number(product.price ?? price ?? 0),
         totalPrice: Number(product.price ?? price ?? 0) * Number(quantity || 1),
       });
     }
 
-    // Recalculate totalAmount (if your schema stores it)
-    cart.totalAmount = (cart.items || []).reduce((sum, it) => {
-      const p = Number(it.price || 0);
-      const q = Number(it.quantity || 0);
-      return sum + p * q;
-    }, 0);
+    // ✅ Recalculate totalAmount
+    cart.totalAmount = cart.items.reduce(
+      (sum, it) => sum + (Number(it.price) * Number(it.quantity)),
+      0
+    );
 
     await cart.save();
 
-    // Return normalized items for frontend convenience
-    const items = (cart.items || []).map(it => ({
-      _id: it._id,
-      id: it.id,
-      name: it.name,
-      name_ar: it.name_ar,
-      image: it.image,
-      category: it.category,
-      category_ar: it.category_ar,
-      productType: it.productType,
-      price: Number(it.price || 0),
-      quantity: Number(it.quantity || 1),
-      totalPrice: Number(it.totalPrice || (it.price * it.quantity)),
-    }));
-
-    return res.status(200).json({ message: 'Product added to cart', items, cart });
+    return res.status(200).json({
+      message: "Product added to cart",
+      items: cart.items,
+      cart,
+    });
   } catch (error) {
-    console.error('Error adding to cart:', error);
-    return res.status(500).json({ message: 'Error adding to cart', error: error.message });
+    console.error("❌ Error adding to cart:", error);
+    return res.status(500).json({ message: "Error adding to cart", error: error.message });
   }
 };
 
-// Get Cart Items
+// ---------------------------------------------------------------------
+// GET CART ITEMS
+// ---------------------------------------------------------------------
 const getCartItems = async (req, res) => {
   try {
     const userId = req.user?._id || req.params.userId;
     if (!userId) return res.status(400).json({ message: "User ID is required." });
 
-    // populate product details if desired
-    const cart = await Cart.findOne({ userId }).populate('items.id').lean();
-
+    const cart = await Cart.findOne({ userId }).populate("items._id").lean();
     if (!cart) return res.status(200).json({ items: [] });
 
-    const items = (cart.items || []).map(item => {
-      const product = item.id || {}; // if populated, item.id is product
+    const items = (cart.items || []).map((item) => {
+      const product = item._id || {};
       return {
-        _id: item._id,
-        id: product._id || item.id,
-        name: item.name || product.name || '',
-        name_ar: item.name_ar || product.name_ar || '',
+        _id: product._id || item._id,
+        name: item.name || product.name || "",
+        name_ar: item.name_ar || product.name_ar || "",
         image: item.image || product.image || {},
-        category: item.category || product.category || '',
-        category_ar: item.category_ar || product.category_ar || '',
-        productType: item.productType || product.productType || '',
+        category: item.category || product.category || "",
+        category_ar: item.category_ar || product.category_ar || "",
+        productType: item.productType || product.productType || "",
         price: Number(item.price ?? product.price ?? 0),
         quantity: Number(item.quantity ?? 1),
-        totalPrice: Number(item.totalPrice ?? (Number(item.price ?? product.price ?? 0) * Number(item.quantity ?? 1)))
+        totalPrice:
+          Number(item.totalPrice) ||
+          Number(item.price ?? product.price ?? 0) * Number(item.quantity ?? 1),
       };
     });
 
@@ -132,66 +123,35 @@ const getCartItems = async (req, res) => {
   }
 };
 
-// Remove From Cart
+// ---------------------------------------------------------------------
+// REMOVE ITEM
+// ---------------------------------------------------------------------
 const removeFromCart = async (req, res) => {
-  const { itemId } = req.params;
-  const userId = req.user?._id;
-  if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
   try {
-    const objectId = (() => {
-      try { return mongoose.Types.ObjectId(itemId); } catch (e) { return null; }
-    })();
+    const { itemId } = req.params;
+    const userId = req.user?._id;
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
     const cart = await Cart.findOne({ userId });
     if (!cart) return res.status(404).json({ message: "Cart not found" });
 
-    // Try to find by cart-item _id or by referenced product id
-    const itemToRemove = cart.items.find(item => {
-      const currentId = item._id || item.id;
-      if (!currentId) return false;
-      try {
-        if (objectId && currentId.equals) return currentId.equals(objectId);
-      } catch (e) {}
-      return String(currentId) === String(itemId);
-    });
+    cart.items = cart.items.filter((i) => String(i._id) !== String(itemId));
+    cart.totalAmount = cart.items.reduce(
+      (sum, it) => sum + (Number(it.price) * Number(it.quantity)),
+      0
+    );
 
-    if (!itemToRemove) {
-      console.error("Item not found in cart for itemId:", itemId);
-      console.log("Cart items:", cart.items.map(item => (item._id || item.id).toString()));
-      return res.status(404).json({ message: "Item not found in cart" });
-    }
-
-    cart.items = cart.items.filter(item => {
-      const currentId = item._id || item.id;
-      if (!currentId) return true;
-      try {
-        if (objectId && currentId.equals) return !currentId.equals(objectId);
-      } catch (e) {}
-      return String(currentId) !== String(itemId);
-    });
-
-    cart.totalAmount = (cart.items || []).reduce((sum, it) => sum + (Number(it.price || 0) * Number(it.quantity || 0)), 0);
     await cart.save();
-
-    const items = (cart.items || []).map(it => ({
-      _id: it._id,
-      id: it.id,
-      name: it.name,
-      price: Number(it.price || 0),
-      quantity: Number(it.quantity || 1),
-      image: it.image,
-      totalPrice: Number(it.totalPrice || (it.price * it.quantity))
-    }));
-
-    return res.status(200).json({ message: "Item removed from cart", items, cart });
+    return res.status(200).json({ message: "Item removed", items: cart.items, cart });
   } catch (error) {
-    console.error("Error in removeFromCart:", error);
+    console.error("Error removing item:", error);
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
-// Clear Cart
+// ---------------------------------------------------------------------
+// CLEAR CART
+// ---------------------------------------------------------------------
 const clearCart = async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -211,188 +171,142 @@ const clearCart = async (req, res) => {
   }
 };
 
-// Increase quantity
+// ---------------------------------------------------------------------
+// INCREASE QUANTITY
+// ---------------------------------------------------------------------
 const increaseQuantity = async (req, res) => {
-  const { itemId } = req.params;
-  const userId = req.user?._id || req.body.userId;
-  if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
   try {
+    const { itemId } = req.params;
+    const userId = req.user?._id;
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
     const cart = await Cart.findOne({ userId });
     if (!cart) return res.status(404).json({ message: "Cart not found" });
 
-    const item = cart.items.find(i => (i.id && String(i.id) === String(itemId)) || (i._id && String(i._id) === String(itemId)));
-    if (!item) return res.status(404).json({ message: "Item not found in cart" });
+    const item = cart.items.find((i) => String(i._id) === String(itemId));
+    if (!item) return res.status(404).json({ message: "Item not found" });
 
-    item.quantity = Number(item.quantity || 0) + 1;
-    item.totalPrice = Number(item.price || 0) * Number(item.quantity || 1);
+    item.quantity += 1;
+    item.totalPrice = item.price * item.quantity;
+    cart.totalAmount = cart.items.reduce(
+      (sum, it) => sum + (it.price * it.quantity),
+      0
+    );
 
-    cart.totalAmount = (cart.items || []).reduce((sum, it) => sum + (Number(it.price || 0) * Number(it.quantity || 0)), 0);
     await cart.save();
-
-    // return the whole updated cart items to the frontend
-    const items = (cart.items || []).map(it => ({
-      _id: it._id,
-      id: it.id,
-      name: it.name,
-      price: Number(it.price || 0),
-      quantity: Number(it.quantity || 1),
-      totalPrice: Number(it.totalPrice || (it.price * it.quantity)),
-      image: it.image
-    }));
-
-    return res.status(200).json({ message: "Item increased in cart", items, cart });
+    return res.status(200).json({ message: "Quantity increased", items: cart.items, cart });
   } catch (error) {
     console.error("Increase quantity error:", error);
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
-// Decrease quantity
+// ---------------------------------------------------------------------
+// DECREASE QUANTITY
+// ---------------------------------------------------------------------
 const decreaseQuantity = async (req, res) => {
-  const { itemId } = req.params;
-  const userId = req.user?._id || req.body.userId;
-  if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
   try {
+    const { itemId } = req.params;
+    const userId = req.user?._id;
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
     const cart = await Cart.findOne({ userId });
     if (!cart) return res.status(404).json({ message: "Cart not found" });
 
-    const item = cart.items.find(i => (i.id && String(i.id) === String(itemId)) || (i._id && String(i._id) === String(itemId)));
-    if (!item) return res.status(404).json({ message: "Item not found in cart" });
+    const item = cart.items.find((i) => String(i._id) === String(itemId));
+    if (!item) return res.status(404).json({ message: "Item not found" });
 
     if (item.quantity > 1) {
-      item.quantity = Number(item.quantity) - 1;
-      item.totalPrice = Number(item.price || 0) * Number(item.quantity || 1);
+      item.quantity -= 1;
+      item.totalPrice = item.price * item.quantity;
     } else {
-      cart.items = cart.items.filter(it => !((it.id && String(it.id) === String(itemId)) || (it._id && String(it._id) === String(itemId))));
+      cart.items = cart.items.filter((i) => String(i._id) !== String(itemId));
     }
 
-    cart.totalAmount = (cart.items || []).reduce((sum, it) => sum + (Number(it.price || 0) * Number(it.quantity || 0)), 0);
+    cart.totalAmount = cart.items.reduce(
+      (sum, it) => sum + (it.price * it.quantity),
+      0
+    );
+
     await cart.save();
-
-    const items = (cart.items || []).map(it => ({
-      _id: it._id,
-      id: it.id,
-      name: it.name,
-      price: Number(it.price || 0),
-      quantity: Number(it.quantity || 1),
-      totalPrice: Number(it.totalPrice || (it.price * it.quantity)),
-      image: it.image
-    }));
-
-    return res.status(200).json({ message: "Item decreased in cart", items, cart });
+    return res.status(200).json({ message: "Quantity decreased", items: cart.items, cart });
   } catch (error) {
     console.error("Decrease quantity error:", error);
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
-/*
-  Payment code kept as-is with minor token caching improvement.
-  (I left processPayment and getAuthToken as in your original file.)
-  If you want me to reformat those too I can — they were mostly fine.
-*/
-
+// ---------------------------------------------------------------------
+// PAYMENT (PAYMOB)
+// ---------------------------------------------------------------------
 const PAYMOB_API_KEY = process.env.PAYMOB_API_KEY;
 const PAYMOB_INTEGRATION_ID = process.env.PAYMOB_INTEGRATION_ID;
-const PAYMOB_AUTH_URL = 'https://accept.paymob.com/api/auth/tokens';
-const PAYMOB_ORDER_URL = 'https://accept.paymob.com/api/ecommerce/orders';
-const PAYMOB_PAYMENT_URL = 'https://accept.paymob.com/api/acceptance/payment_keys';
+const PAYMOB_AUTH_URL = "https://accept.paymob.com/api/auth/tokens";
+const PAYMOB_ORDER_URL = "https://accept.paymob.com/api/ecommerce/orders";
+const PAYMOB_PAYMENT_URL = "https://accept.paymob.com/api/acceptance/payment_keys";
 
 let cachedToken = null;
 let tokenExpiry = null;
 
 const getAuthToken = async () => {
-  if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) {
-    return cachedToken;
-  }
-  const authResponse = await axios.post(PAYMOB_AUTH_URL, { api_key: PAYMOB_API_KEY });
-  if (!authResponse.data || !authResponse.data.token) {
-    throw new Error('Failed to authenticate with Paymob.');
-  }
-  cachedToken = authResponse.data.token;
+  if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) return cachedToken;
+  const response = await axios.post(PAYMOB_AUTH_URL, { api_key: PAYMOB_API_KEY });
+  cachedToken = response.data.token;
   tokenExpiry = Date.now() + 60 * 60 * 1000;
   return cachedToken;
 };
 
 const processPayment = async (req, res) => {
-  const { totalAmount } = req.body;
-  const userId = req.user?._id;
-  const userEmail = req.user?.email || "saidsadaoy@gmail.com";
-  const userName = req.user?.name || "said";
-  const userPhone = req.user?.phone || "01028496209";
-
-  if (!totalAmount || totalAmount <= 0) {
-    return res.status(400).json({ success: false, message: 'Invalid totalAmount provided.' });
-  }
-  if (!PAYMOB_API_KEY || !PAYMOB_INTEGRATION_ID) {
-    return res.status(500).json({ success: false, message: 'Server configuration error.' });
-  }
-
   try {
+    const { totalAmount } = req.body;
+    const userId = req.user?._id;
+    if (!totalAmount || totalAmount <= 0)
+      return res.status(400).json({ success: false, message: "Invalid total amount" });
+
     const token = await getAuthToken();
 
-    let cartItems = [];
-    if (userId) {
-      const cart = await Cart.findOne({ userId });
-      if (cart && Array.isArray(cart.items)) {
-        cartItems = cart.items.map(item => ({
-          name: item.name,
-          amount_cents: Math.round(Number(item.price || 0) * 100),
-          description: item.productType || "Product",
-          quantity: Number(item.quantity || 1)
-        }));
-      }
-    }
+    const cart = await Cart.findOne({ userId });
+    const items = (cart?.items || []).map((i) => ({
+      name: i.name,
+      amount_cents: Math.round(i.price * 100),
+      description: i.productType || "Product",
+      quantity: i.quantity,
+    }));
 
     const orderResponse = await axios.post(PAYMOB_ORDER_URL, {
       auth_token: token,
       amount_cents: totalAmount,
-      currency: 'EGP',
-      items: cartItems,
+      currency: "EGP",
+      items,
     });
 
-    const orderId = orderResponse.data.id;
-    const validEmail = typeof userEmail === 'string' && userEmail.includes('@') ? userEmail : 'saidsadaoy@gmail.com';
-    const validFirstName = typeof userName === 'string' && userName.length > 0 ? userName : 'Test';
-    const validPhone = typeof userPhone === 'string' && /^01[0-9]{9}$/.test(userPhone) ? userPhone : '01028496209';
-
-    const paymentPayload = {
+    const paymentResponse = await axios.post(PAYMOB_PAYMENT_URL, {
       auth_token: token,
       amount_cents: totalAmount,
-      order_id: orderId,
-      currency: 'EGP',
+      order_id: orderResponse.data.id,
+      currency: "EGP",
       integration_id: PAYMOB_INTEGRATION_ID,
       billing_data: {
-        apartment: "NA",
-        email: validEmail,
-        floor: "NA",
-        first_name: validFirstName,
-        street: "NA",
-        building: "NA",
-        phone_number: validPhone,
-        shipping_method: "NA",
-        postal_code: "NA",
+        first_name: req.user?.name || "User",
+        email: req.user?.email || "default@example.com",
+        phone_number: req.user?.phone || "01000000000",
         city: "Cairo",
         country: "EG",
-        last_name: "User",
-        state: "Cairo"
-      }
-    };
+        state: "Cairo",
+      },
+    });
 
-    const paymentResponse = await axios.post(PAYMOB_PAYMENT_URL, paymentPayload);
-    if (!paymentResponse.data || !paymentResponse.data.payment_key) {
-      return res.status(500).json({ success: false, message: 'Failed to create payment key', details: paymentResponse.data });
-    }
-
-    return res.json({ success: true, paymentKey: paymentResponse.data.payment_key });
+    return res.status(200).json({
+      success: true,
+      paymentKey: paymentResponse.data.payment_key,
+    });
   } catch (error) {
-    console.error('Payment processing error:', error.response?.data || error.message);
-    return res.status(500).json({ success: false, message: 'Payment processing failed.' });
+    console.error("Payment error:", error.response?.data || error.message);
+    return res.status(500).json({ success: false, message: "Payment failed" });
   }
 };
 
+// ---------------------------------------------------------------------
 module.exports = {
   addToCart,
   getCartItems,

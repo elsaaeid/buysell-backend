@@ -1,76 +1,49 @@
+// models/cartModel.js
 const mongoose = require("mongoose");
 
-
-// Define the schema for cart items
-const cartItemSchema = new mongoose.Schema({
-  id: { // Renamed from id to id for clarity
-    type: mongoose.Schema.Types.ObjectId,
-    required: true,
-    ref: "Products",
-  },
-  name: { type: String, required: false },
-  name_ar: { // Arabic name
-    type: String,
-    required: false,
-    trim: true,
-  },
-  image: { // Change this to an object
-    fileName: { type: String, required: false },
-    filePath: { type: String, required: false },
-    fileType: { type: String, required: false },
-    fileSize: { type: String, required: false },
-  },
-  quantity: { type: Number, required: false, default: 1 },
-  price: { type: Number, required: false, min: 0 },
-  category: {
-    type: String,
-    required: false,
-    trim: true,
-  },
-  category_ar: { // Arabic category
-    type: String,
-    required: false,
-    trim: true,
-  },
-  productType: {
-    type: String,
-    required: false,
-    trim: true,
-  },
-});
-
-// Cart Schema
-const cartSchema = mongoose.Schema(
+// ✅ Define cart item schema
+const cartItemSchema = new mongoose.Schema(
   {
-  _id: {
-    type: mongoose.Schema.Types.ObjectId,
-    auto: true // Automatically generate an ObjectId for each favorite
-  },
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    required: true,
-    ref: 'User'
-  },
-  photo: {
-    type: String,
-    required: [true, "Please add a photo"],
-    default: "https://i.ibb.co/4pDNDk1/avatar.png",
-  },
-    items: [cartItemSchema],
-    createdAt: {
-      type: Date,
-      default: Date.now, // Automatically set the creation date
+    _id: { // same as product _id
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+      ref: "Products",
     },
-    updatedAt: {
-        type: Date,
-        default: Date.now, // Automatically set the update date
+    name: { type: String },
+    name_ar: { type: String, trim: true },
+    image: {
+      fileName: String,
+      filePath: String,
+      fileType: String,
+      fileSize: String,
+    },
+    quantity: { type: Number, default: 1, min: 1 },
+    price: { type: Number, min: 0 },
+    category: { type: String, trim: true },
+    category_ar: { type: String, trim: true },
+    productType: { type: String, trim: true },
+    totalPrice: { type: Number, default: 0 },
   },
-  },
-  {
-    timestamps: true, // Automatically manage createdAt and updatedAt fields
-  }
+  { _id: false } // ✅ prevent new ObjectIds for subdocs
 );
 
+// ✅ Cart schema
+const cartSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+      ref: "User",
+    },
+    photo: {
+      type: String,
+      default: "https://i.ibb.co/4pDNDk1/avatar.png",
+    },
+    items: [cartItemSchema],
+    totalAmount: { type: Number, default: 0 },
+  },
+  { timestamps: true }
+);
 
 const Cart = mongoose.model("Cart", cartSchema);
 module.exports = Cart;
