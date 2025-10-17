@@ -92,49 +92,67 @@ const ratingSchema = new mongoose.Schema({
 const favoriteSchema = new mongoose.Schema({
   _id: {
     type: mongoose.Schema.Types.ObjectId,
-    auto: true // Automatically generate an ObjectId for each favorite
+    auto: true
   },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     required: true,
-    ref: 'User'
+    ref: "User"
   },
   photo: {
     type: String,
     required: [true, "Please add a photo"],
-    default: "https://i.ibb.co/4pDNDk1/avatar.png",
+    default: "https://i.ibb.co/4pDNDk1/avatar.png"
   },
+
+  // ✅ Embed full product objects (not just ObjectIds)
   favoriteProducts: [
     {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Products"
+      _id: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+      name: { type: String },
+      name_ar: { type: String },
+      price: { type: Number },
+      image: {
+        type: Object,
+        default: {},
+        required: false,
+      },
     }
   ]
-});
+}, { timestamps: true });
 
 // Compare Schema
 const compareSchema = new mongoose.Schema({
   _id: {
     type: mongoose.Schema.Types.ObjectId,
-    auto: true // Automatically generate an ObjectId for each favorite
+    auto: true
   },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     required: true,
-    ref: 'User'
+    ref: "User"
   },
   photo: {
     type: String,
     required: [true, "Please add a photo"],
-    default: "https://i.ibb.co/4pDNDk1/avatar.png",
+    default: "https://i.ibb.co/4pDNDk1/avatar.png"
   },
+
+  // ✅ Embed full product objects (not just ObjectIds)
   compareProducts: [
     {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Products"
+      _id: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+      name: { type: String },
+      name_ar: { type: String },
+      price: { type: Number },
+      image: {
+        type: Object,
+        default: {},
+        required: false,
+      },
     }
   ]
-});
+}, { timestamps: true });
 
 // Product Schema
 const productSchema = mongoose.Schema(

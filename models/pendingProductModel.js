@@ -35,6 +35,12 @@ const pendingProductSchema = new mongoose.Schema({
       required: false,
       trim: true,
   },
+  currency: {
+    type: String,
+    required: false,
+    trim: true,
+    default: "USD",
+  },
     sku: {
         type: [String],
         required: false,

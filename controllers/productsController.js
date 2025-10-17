@@ -777,116 +777,177 @@ const rateProduct = async (req, res) => {
   }
 };
 
-// Add a product to user's favorites
+// ✅ Add product (with full details) to user's favorites
 const addToFavorite = async (req, res) => {
-  const userId = req.user._id;
-  const { itemId } = req.params;
-
-  if (!userId || !itemId) {
-    return res.status(400).json({ message: "Missing userId or itemId." });
-  }
   try {
-    // Find or create the user's Favorite document
+    const userId = req.user?._id;
+    const { itemId } = req.params;
+
+    if (!userId || !itemId) {
+      return res.status(400).json({ message: "Missing userId or itemId." });
+    }
+
+    // ✅ Find or create the user's favorites doc
     let favorite = await Favorite.findOne({ userId });
     if (!favorite) {
       favorite = new Favorite({ userId, favoriteProducts: [] });
     }
-    // Prevent duplicates
-    if (!favorite.favoriteProducts.includes(itemId)) {
-      favorite.favoriteProducts.push(itemId);
-      await favorite.save();
+
+    // ✅ Fetch the product details
+    const product = await Products.findById(itemId).lean();
+    if (!product) {
+      return res.status(404).json({ message: "Product not found." });
     }
-    // Populate and return updated favorites
-    await favorite.populate('favoriteProducts');
-    res.status(200).json({ favorites: favorite.favoriteProducts });
+
+    // ✅ Check if item already exists safely
+    const alreadyExists = favorite.favoriteProducts.some(
+      (fav) => fav && fav._id && fav._id.toString() === itemId.toString()
+    );
+
+    if (alreadyExists) {
+      return res.status(200).json({
+        message: "Product already in favorites.",
+        favorites: favorite.favoriteProducts
+      });
+    }
+
+    // ✅ Push full product object
+    favorite.favoriteProducts.push({
+      _id: product._id,
+      name: product.name,
+      name_ar: product.name_ar,
+      price: product.price,
+      image: product.image,
+    });
+
+    await favorite.save();
+
+    return res.status(200).json({
+      message: "Added to favorites successfully",
+      favorites: favorite.favoriteProducts
+    });
   } catch (error) {
-    console.error
-    res.status(500).json({ message: "Server error. Please try again later." });
+    console.error("❌ Error in addToFavorite:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
-// Function to remove product from favorites
-const removeFromFavorite = async (req, res) => {
-  const userId = req.user._id;
-  const { itemId } = req.params;
 
-  if (!userId || !itemId) {
-    return res.status(400).json({ message: "Missing userId or itemId." });
-  }
+
+// ✅ Remove product from favorites
+const removeFromFavorite = async (req, res) => {
   try {
-    // Find the user's Favorite document
-    let favorite = await Favorite.findOne({ userId });
+    const userId = req.user._id;
+    const { itemId } = req.params;
+
+    if (!userId || !itemId) {
+      return res.status(400).json({ message: "Missing userId or itemId." });
+    }
+
+    const favorite = await Favorite.findOne({ userId });
     if (!favorite) {
       return res.status(404).json({ message: "Favorites not found for user." });
     }
-    // Remove the product from favorites if it exists
-    const index = favorite.favoriteProducts.indexOf(itemId);
-    if (index === -1) {
-      return res.status(404).json({ message: "Product not found in favorites." });
-    }
-    favorite.favoriteProducts.splice(index, 1);
+
+    // Filter out the removed item
+    favorite.favoriteProducts = favorite.favoriteProducts.filter(
+      (prod) => String(prod._id) !== String(itemId)
+    );
+
     await favorite.save();
-    await favorite.populate('favoriteProducts');
-    res.status(200).json({ favorites: favorite.favoriteProducts });
+
+    return res.status(200).json({
+      message: "Removed from favorites successfully",
+      favorites: favorite.favoriteProducts,
+    });
   } catch (error) {
-    console.error("Error removing from favorites:", error);
-    res.status(500).json({ message: "Server error. Please try again later." });
+    console.error("❌ Error removing from favorites:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
-// clearProductFavorites
+
+
+// ✅ Clear all favorites for user
 const clearProductFavorites = async (req, res) => {
-    const userId = req.user._id; // Get userId from the request object
-    console.log("Attempting to clear product favorites for user ID:", userId);
-    
-    try {
-        const favorite = await Favorite.findOne({ userId });
-        if (!favorite) {
-            console.error("Favorites not found for user:", userId);
-            return res.status(404).json({ message: "Favorites not found for user." });
-        }
-        
-        // Clear all favorite products
-        favorite.favoriteProducts = [];
-        await favorite.save();
-        console.log("Successfully cleared product favorites for user ID:", userId);
-        res.status(200).json({ favorites: favorite.favoriteProducts });
-    } catch (error) {
-        console.error("Error clearing product favorites:", error);
-        res.status(500).json({ message: "Server error. Please try again later." });
+  try {
+    const userId = req.user?._id;
+
+    if (!userId) {
+      return res.status(400).json({ message: "Missing userId." });
     }
+
+    const favorite = await Favorite.findOne({ userId });
+    if (!favorite) {
+      return res.status(404).json({ message: "No favorites found for this user." });
+    }
+
+    favorite.favoriteProducts = [];
+    await favorite.save();
+
+    return res.status(200).json({
+      message: "All favorites cleared successfully.",
+      favorites: [],
+    });
+  } catch (error) {
+    console.error("❌ Error clearing favorites:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
 };
+
 
 // Add a product to user's compare list
 const addToCompare = async (req, res) => {
-  const userId = req.user._id;
-  const { itemId } = req.params;
-
-  // Validate userId and itemId
-  if (!userId || !itemId) {
-    return res.status(400).json({ message: "Missing userId or itemId." });
-  }
-  if (!itemId.match(/^[0-9a-fA-F]{24}$/)) {
-    return res.status(400).json({ message: "Invalid itemId: Must be a valid MongoDB ObjectId." });
-  }
-
   try {
-    // Find or create the user's Compare document
+    const userId = req.user?._id;
+    const { itemId } = req.params;
+
+    if (!userId || !itemId) {
+      return res.status(400).json({ message: "Missing userId or itemId." });
+    }
+
+    // ✅ Find or create the user's compare doc
     let compare = await Compare.findOne({ userId });
     if (!compare) {
       compare = new Compare({ userId, compareProducts: [] });
     }
-    // Prevent duplicates
-    if (!compare.compareProducts.includes(itemId)) {
-      compare.compareProducts.push(itemId);
-      await compare.save();
+
+    // ✅ Fetch the product details
+    const product = await Products.findById(itemId).lean();
+    if (!product) {
+      return res.status(404).json({ message: "Product not found." });
     }
-    // Populate and return updated compare list
-    await compare.populate('compareProducts');
-    res.status(200).json({ compares: compare.compareProducts });
+
+    // ✅ Check if item already exists safely
+    const alreadyExists = compare.compareProducts.some(
+      (comp) => comp && comp._id && comp._id.toString() === itemId.toString()
+    );
+
+    if (alreadyExists) {
+      return res.status(200).json({
+        message: "Product already in compare list.",
+        compareProducts: compare.compareProducts
+      });
+    }
+
+    // ✅ Push full product object
+    compare.compareProducts.push({
+      _id: product._id,
+      name: product.name,
+      name_ar: product.name_ar,
+      price: product.price,
+      image: product.image,
+    });
+
+    await compare.save();
+
+    return res.status(200).json({
+      message: "Added to compare list successfully",
+      compareProducts: compare.compareProducts
+    });
   } catch (error) {
-    console.error("Error adding to compare:", error);
-    res.status(500).json({ message: "Server error. Please try again later." });
+    console.error("❌ Error in addToCompare:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -946,54 +1007,64 @@ const getUserFavorites = async (req, res) => {
 
 // Function to remove product from compare
 const removeFromCompare = async (req, res) => {
-  const userId = req.user._id;
-  const { itemId } = req.params;
-  if (!userId || !itemId) {
-    return res.status(400).json({ message: "Missing userId or itemId." });
-  }
   try {
-    // Find the user's Compare document
-    let compare = await Compare.findOne({ userId });
+    const userId = req.user._id;
+    const { itemId } = req.params;
+
+    if (!userId || !itemId) {
+      return res.status(400).json({ message: "Missing userId or itemId." });
+    }
+
+    const compare = await Compare.findOne({ userId });
     if (!compare) {
       return res.status(404).json({ message: "Compare list not found for user." });
     }
-    // Remove the product from compare if it exists
-    const index = compare.compareProducts.indexOf(itemId);
-    if (index === -1) {
-      return res.status(404).json({ message: "Product not found in compare list." });
-    }
-    compare.compareProducts.splice(index, 1);
+
+    // Filter out the removed item
+    compare.compareProducts = compare.compareProducts.filter(
+      (prod) => String(prod._id) !== String(itemId)
+    );
+
     await compare.save();
-    await compare.populate('compareProducts');
-    res.status(200).json({ compares: compare.compareProducts });
+
+    return res.status(200).json({
+      message: "Removed from compare list successfully",
+      compareProducts: compare.compareProducts,
+    });
   } catch (error) {
-    console.error("Error removing from compare:", error);
-    res.status(500).json({ message: "Server error. Please try again later." });
+    console.error("❌ Error removing from compare list:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
+
 // clearProductCompares
 const clearProductCompares = async (req, res) => {
-    const userId = req.user._id; // Get userId from the request object
-    // console.log("Attempting to clear product compares for user ID:", userId);
-    
-    try {
-        const compare = await Compare.findOne({ userId });
-        if (!compare) {
-            // console.error("compares not found for user:", userId);
-            return res.status(404).json({ message: "Compares not found for user." });
-        }
-        
-        // Clear all compare products
-        compare.compareProducts = [];
-        await compare.save();
-        // console.log("Successfully cleared product compares for user ID:", userId);
-        res.status(200).json({ compares: compare.compareProducts });
-    } catch (error) {
-        // console.error("Error clearing product compares:", error);
-        res.status(500).json({ message: "Server error. Please try again later." });
+  try {
+    const userId = req.user?._id;
+
+    if (!userId) {
+      return res.status(400).json({ message: "Missing userId." });
     }
+
+    const compare = await Compare.findOne({ userId });
+    if (!compare) {
+      return res.status(404).json({ message: "No compares found for this user." });
+    }
+
+    compare.compareProducts = [];
+    await compare.save();
+
+    return res.status(200).json({
+      message: "All compares cleared successfully.",
+      compares: [],
+    });
+  } catch (error) {
+    console.error("❌ Error clearing compares:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
 };
+
 
 module.exports = {
   createProduct,

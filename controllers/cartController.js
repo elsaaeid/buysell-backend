@@ -27,6 +27,7 @@ const addToCart = async (req, res) => {
       image,
       category,
       category_ar,
+      currency,
     } = req.body;
 
     if (!id || quantity == null)
@@ -65,6 +66,7 @@ const addToCart = async (req, res) => {
         quantity: Number(quantity || 1),
         image: product.image || image || {},
         totalPrice: Number(product.price ?? price ?? 0) * Number(quantity || 1),
+        currency: product.currency || currency || "USD",
       });
     }
 
@@ -110,6 +112,7 @@ const getCartItems = async (req, res) => {
         productType: item.productType || product.productType || "",
         price: Number(item.price ?? product.price ?? 0),
         quantity: Number(item.quantity ?? 1),
+        currency: item.currency || product.currency || "USD",
         totalPrice:
           Number(item.totalPrice) ||
           Number(item.price ?? product.price ?? 0) * Number(item.quantity ?? 1),
@@ -248,61 +251,102 @@ const PAYMOB_PAYMENT_URL = "https://accept.paymob.com/api/acceptance/payment_key
 let cachedToken = null;
 let tokenExpiry = null;
 
-const getAuthToken = async () => {
-  if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) return cachedToken;
-  const response = await axios.post(PAYMOB_AUTH_URL, { api_key: PAYMOB_API_KEY });
-  cachedToken = response.data.token;
+async function getAuthToken() {
+  if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) {
+    return cachedToken;
+  }
+  const resp = await axios.post(PAYMOB_AUTH_URL, {
+    api_key: PAYMOB_API_KEY,
+  });
+  if (!resp.data || !resp.data.token) {
+    throw new Error("Paymob auth failed");
+  }
+  cachedToken = resp.data.token;
+  // expire in 1 hour (or from resp)
   tokenExpiry = Date.now() + 60 * 60 * 1000;
   return cachedToken;
-};
+}
 
 const processPayment = async (req, res) => {
   try {
-    const { totalAmount } = req.body;
     const userId = req.user?._id;
-    if (!totalAmount || totalAmount <= 0)
-      return res.status(400).json({ success: false, message: "Invalid total amount" });
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
 
-    const token = await getAuthToken();
+    const { totalAmount /* in cents? depends on frontend */ } = req.body;
+    if (!totalAmount || totalAmount <= 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid amount" });
+    }
 
-    const cart = await Cart.findOne({ userId });
-    const items = (cart?.items || []).map((i) => ({
-      name: i.name,
-      amount_cents: Math.round(i.price * 100),
-      description: i.productType || "Product",
-      quantity: i.quantity,
-    }));
+    // Fetch cart items if you want to store order or send item details to Paymob
+    const cart = await Cart.findOne({ userId }).lean();
+    const cartItems = cart?.items || [];
 
-    const orderResponse = await axios.post(PAYMOB_ORDER_URL, {
-      auth_token: token,
+    // 1️⃣ Get Paymob auth token
+    const authToken = await getAuthToken();
+
+    // 2️⃣ Create an order on Paymob side (optional, depends on your integration)
+    const orderResp = await axios.post(PAYMOB_ORDER_URL, {
+      auth_token: authToken,
       amount_cents: totalAmount,
       currency: "EGP",
-      items,
+      items: cartItems.map((i) => ({
+        name: i.name,
+        amount_cents: Math.round(Number(i.price) * 100),
+        quantity: i.quantity,
+        // you may add other required fields such as description
+      })),
+      // you can add more order fields if needed
     });
 
-    const paymentResponse = await axios.post(PAYMOB_PAYMENT_URL, {
-      auth_token: token,
+    const paymobOrderId = orderResp.data.id;
+    if (!paymobOrderId) {
+      throw new Error("Failed to create Paymob order");
+    }
+
+    // 3️⃣ Request the payment key token
+    const paymentKeyResp = await axios.post(PAYMOB_PAYMENT_URL, {
+      auth_token: authToken,
       amount_cents: totalAmount,
-      order_id: orderResponse.data.id,
-      currency: "EGP",
+      expiration: 3600, // seconds till key expires (optional)
+      order_id: paymobOrderId,
       integration_id: PAYMOB_INTEGRATION_ID,
       billing_data: {
+        // Fill with your user billing data
         first_name: req.user?.name || "User",
-        email: req.user?.email || "default@example.com",
-        phone_number: req.user?.phone || "01000000000",
-        city: "Cairo",
-        country: "EG",
-        state: "Cairo",
+        email: req.user?.email || "",
+        phone_number: req.user?.phone || "",
+        city: req.user?.city || "",    // if you have those fields
+        country: "EG",                 // or dynamic
+        // address fields if needed
       },
+      // You can add more payload according to Paymob docs
     });
+
+    const paymentKey = paymentKeyResp.data?.payment_key;
+
+    if (!paymentKey) {
+      throw new Error("Failed to get payment key from Paymob");
+    }
+
+    // Optionally, save the order in your own DB
+    // await Order.create({ userId, items: cartItems, totalAmount, paymobOrderId, paymentKey });
 
     return res.status(200).json({
       success: true,
-      paymentKey: paymentResponse.data.payment_key,
+      paymentKey,
+      orderId: paymobOrderId,
     });
   } catch (error) {
-    console.error("Payment error:", error.response?.data || error.message);
-    return res.status(500).json({ success: false, message: "Payment failed" });
+    console.error("processPayment error:", error.response?.data || error.message);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+      details: error.response?.data,
+    });
   }
 };
 

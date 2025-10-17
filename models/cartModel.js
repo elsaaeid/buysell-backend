@@ -23,6 +23,12 @@ const cartItemSchema = new mongoose.Schema(
     category_ar: { type: String, trim: true },
     productType: { type: String, trim: true },
     totalPrice: { type: Number, default: 0 },
+    currency: {
+    type: String,
+    required: false,
+    trim: true,
+    default: "USD",
+  },
   },
   { _id: false } // ✅ prevent new ObjectIds for subdocs
 );
